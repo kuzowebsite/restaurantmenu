@@ -20,6 +20,14 @@ export const auth = getAuth(app)
 // Export onValue for use in components
 export { onValue, ref }
 
+// SMS Configuration
+const SMS_CONFIG = {
+  senderNumber: "80901860",
+  serviceName: "Restaurant App",
+  messageTemplate: (code: string, serviceName: string) =>
+    `${serviceName} баталгаажуулах код: ${code}. 5 минутын дотор ашиглана уу. Хуваалцахгүй байна уу.`,
+}
+
 // Database operations
 export const dbOperations = {
   // Categories
@@ -153,6 +161,45 @@ export const dbOperations = {
     await set(ref(database, "siteBranding"), branding)
   },
 
+  // Verification codes storage
+  async storeVerificationCode(phoneNumber: string, code: string) {
+    const codeData = {
+      code: code,
+      timestamp: Date.now(),
+      used: false,
+      senderNumber: SMS_CONFIG.senderNumber,
+      message: SMS_CONFIG.messageTemplate(code, SMS_CONFIG.serviceName),
+    }
+    await set(ref(database, `verificationCodes/${phoneNumber}`), codeData)
+  },
+
+  async getVerificationCode(phoneNumber: string) {
+    const snapshot = await get(ref(database, `verificationCodes/${phoneNumber}`))
+    return snapshot.exists() ? snapshot.val() : null
+  },
+
+  async markCodeAsUsed(phoneNumber: string) {
+    await update(ref(database, `verificationCodes/${phoneNumber}`), { used: true })
+  },
+
+  async deleteVerificationCode(phoneNumber: string) {
+    await remove(ref(database, `verificationCodes/${phoneNumber}`))
+  },
+
+  // SMS Log for tracking
+  async logSMS(phoneNumber: string, code: string, status: "sent" | "failed") {
+    const logData = {
+      phoneNumber: `+976${phoneNumber}`,
+      senderNumber: SMS_CONFIG.senderNumber,
+      message: SMS_CONFIG.messageTemplate(code, SMS_CONFIG.serviceName),
+      status: status,
+      timestamp: Date.now(),
+      date: new Date().toISOString(),
+    }
+    const newRef = push(ref(database, "smsLogs"))
+    await set(newRef, logData)
+  },
+
   // Image operations (base64 storage)
   async uploadImage(imageFile: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -193,5 +240,142 @@ export const authOperations = {
     } catch (error: any) {
       return { success: false, error: error.message }
     }
+  },
+
+  // Phone authentication operations
+  async sendVerificationCode(phoneNumber: string) {
+    try {
+      // Validate Mongolian phone number format
+      const phoneRegex = /^[0-9]{8}$/
+      if (!phoneRegex.test(phoneNumber)) {
+        return { success: false, error: "Утасны дугаар буруу форматтай байна" }
+      }
+
+      // Generate 6-digit verification code
+      const code = Math.floor(100000 + Math.random() * 900000).toString()
+
+      // Store the code in Firebase database (server-side storage)
+      await dbOperations.storeVerificationCode(phoneNumber, code)
+
+      // Simulate SMS sending delay
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+
+      // In production, integrate with SMS Gateway:
+      // Example with Mongolian SMS providers:
+
+      /*
+      // Unitel SMS API
+      const unitelResponse = await fetch('https://api.unitel.mn/sms/send', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer YOUR_API_KEY',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from: SMS_CONFIG.senderNumber,
+          to: `+976${phoneNumber}`,
+          message: SMS_CONFIG.messageTemplate(code, SMS_CONFIG.serviceName)
+        })
+      })
+
+      // Mobicom SMS API
+      const mobicomResponse = await fetch('https://api.mobicom.mn/sms/send', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer YOUR_API_KEY',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          sender: SMS_CONFIG.senderNumber,
+          recipient: `976${phoneNumber}`,
+          text: SMS_CONFIG.messageTemplate(code, SMS_CONFIG.serviceName)
+        })
+      })
+
+      // Skytel SMS API
+      const skytelResponse = await fetch('https://api.skytel.mn/sms/send', {
+        method: 'POST',
+        headers: {
+          'X-API-Key': 'YOUR_API_KEY',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from: SMS_CONFIG.senderNumber,
+          to: phoneNumber,
+          message: SMS_CONFIG.messageTemplate(code, SMS_CONFIG.serviceName)
+        })
+      })
+      */
+
+      // Log SMS for tracking
+      await dbOperations.logSMS(phoneNumber, code, "sent")
+
+      return {
+        success: true,
+        message: `${SMS_CONFIG.senderNumber} дугаараас +976${phoneNumber} руу баталгаажуулах код илгээгдлээ`,
+        senderNumber: SMS_CONFIG.senderNumber,
+      }
+    } catch (error: any) {
+      // Log failed SMS
+      await dbOperations.logSMS(phoneNumber, "", "failed")
+      return { success: false, error: "Код илгээхэд алдаа гарлаа" }
+    }
+  },
+
+  async verifyPhoneCode(phoneNumber: string, code: string) {
+    try {
+      const storedCodeData = await dbOperations.getVerificationCode(phoneNumber)
+
+      if (!storedCodeData) {
+        return { success: false, error: "Код хүчингүй байна" }
+      }
+
+      // Check if code is already used
+      if (storedCodeData.used) {
+        return { success: false, error: "Код аль хэдийн ашигласан байна" }
+      }
+
+      // Check if code is expired (5 minutes)
+      const now = Date.now()
+      const sentTime = storedCodeData.timestamp
+      if (now - sentTime > 5 * 60 * 1000) {
+        await dbOperations.deleteVerificationCode(phoneNumber)
+        return { success: false, error: "Кодын хугацаа дууссан байна" }
+      }
+
+      if (storedCodeData.code === code) {
+        // Mark code as used and clean up
+        await dbOperations.markCodeAsUsed(phoneNumber)
+        await dbOperations.deleteVerificationCode(phoneNumber)
+
+        // Check if user exists or create new user
+        let user = await this.getUserByPhone(phoneNumber)
+        if (!user) {
+          // Create new user with phone number
+          const newUser = {
+            phone: phoneNumber,
+            role: "user",
+            createdAt: new Date().toISOString(),
+          }
+          await dbOperations.addUser(newUser)
+          user = newUser
+        }
+
+        return { success: true, user }
+      } else {
+        return { success: false, error: "Код буруу байна" }
+      }
+    } catch (error: any) {
+      return { success: false, error: "Баталгаажуулахад алдаа гарлаа" }
+    }
+  },
+
+  async getUserByPhone(phone: string) {
+    const snapshot = await get(ref(database, "users"))
+    if (snapshot.exists()) {
+      const users = Object.entries(snapshot.val()).map(([key, value]) => ({ id: key, ...value }))
+      return users.find((user: any) => user.phone === phone)
+    }
+    return null
   },
 }
