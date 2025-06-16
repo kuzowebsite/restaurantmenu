@@ -241,6 +241,12 @@ export default function FoodDeliveryApp() {
   const loadFirebaseData = async () => {
     try {
       setDataLoading(true)
+
+      // Set maximum loading time to 4 seconds
+      const loadingTimeout = setTimeout(() => {
+        setDataLoading(false)
+      }, 4000)
+      
       const [firebaseCategories, firebaseMenuItems, firebaseBranches, firebaseBanners] = await Promise.all([
         dbOperations.getCategories(),
         dbOperations.getMenuItems(),
