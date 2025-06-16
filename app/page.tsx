@@ -135,9 +135,9 @@ export default function FoodDeliveryApp() {
 
   // Site branding state
   const [siteBranding, setSiteBranding] = useState({
-    logo: "🍽️", // This will now store base64 image data
-    name: "Монгол ресторан",
-    subtitle: "Уламжлалт амттай хоол",
+    logo: "", // This will now store base64 image data
+    name: "",
+    subtitle: "",
   })
 
   // Load data from Firebase on component mount
