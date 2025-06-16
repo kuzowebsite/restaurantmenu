@@ -135,9 +135,9 @@ export default function FoodDeliveryApp() {
 
   // Site branding state
   const [siteBranding, setSiteBranding] = useState({
-    logo: "", // This will now store base64 image data
-    name: "",
-    subtitle: "",
+    logo: "🍽️", // This will now store base64 image data
+    name: "Монгол ресторан",
+    subtitle: "Уламжлалт амттай хоол",
   })
 
   // Load data from Firebase on component mount
@@ -237,6 +237,7 @@ export default function FoodDeliveryApp() {
     }
   }
 
+  // loadFirebaseData функцийг хурдан болгох
   const loadFirebaseData = async () => {
     try {
       setDataLoading(true)
@@ -274,19 +275,19 @@ export default function FoodDeliveryApp() {
     }
   }, [promotionalBanners.length])
 
-  // Handle category change with loading
+  // Handle category change with loading хэсгийг хурдан болгох
   const handleCategoryChange = async (categoryId: string) => {
     if (categoryId === activeCategory) return
 
     setIsLoading(true)
     setActiveCategory(categoryId)
 
-    // Simulate loading delay
-    await new Promise((resolve) => setTimeout(resolve, 600))
+    // Simulate loading delay - хурдан болгох
+    await new Promise((resolve) => setTimeout(resolve, 200))
     setIsLoading(false)
   }
 
-  // Handle search with loading
+  // Handle search with loading хэсгийг хурдан болгох
   useEffect(() => {
     if (searchQuery === "") {
       setIsSearching(false)
@@ -296,7 +297,7 @@ export default function FoodDeliveryApp() {
     setIsSearching(true)
     const timer = setTimeout(() => {
       setIsSearching(false)
-    }, 500)
+    }, 200)
 
     return () => clearTimeout(timer)
   }, [searchQuery])
@@ -580,29 +581,20 @@ export default function FoodDeliveryApp() {
     )
   }
 
-  // Enhanced loading screen
+  // Enhanced loading screen хэсгийг хурдан болгох
   if (dataLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white flex items-center justify-center relative overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-yellow-900/20 via-transparent to-transparent"></div>
         <div className="text-center z-10">
-          <div className="relative mb-8">
-            <div className="animate-spin rounded-full h-32 w-32 border-4 border-yellow-500/30 border-t-yellow-500 mx-auto"></div>
+          <div className="relative mb-6">
+            <div className="animate-spin rounded-full h-20 w-20 border-4 border-yellow-500/30 border-t-yellow-500 mx-auto"></div>
             <div className="absolute inset-0 flex items-center justify-center">
-              <Sparkles className="w-8 h-8 text-yellow-500 animate-pulse" />
+              <Sparkles className="w-6 h-6 text-yellow-500 animate-pulse" />
             </div>
           </div>
-          <h3 className="text-2xl font-bold text-white mb-2 animate-pulse">Ачааллаж байна...</h3>
-          <p className="text-gray-400 animate-pulse">Амттай хоолны мэдээллийг бэлтгэж байна</p>
-          <div className="mt-6 flex justify-center space-x-1">
-            {[0, 1, 2].map((i) => (
-              <div
-                key={i}
-                className="w-2 h-2 bg-yellow-500 rounded-full animate-bounce"
-                style={{ animationDelay: `${i * 0.2}s` }}
-              ></div>
-            ))}
-          </div>
+          <h3 className="text-xl font-bold text-white mb-2">Ачааллаж байна...</h3>
+          <p className="text-gray-400">Амттай хоолны мэдээлэл</p>
         </div>
       </div>
     )
@@ -1839,7 +1831,7 @@ export default function FoodDeliveryApp() {
                   key={index}
                   onClick={() => setCurrentBannerIndex(index)}
                   className={`w-2 h-2 rounded-full transition-all duration-300 ${
-                    index === currentBannerIndex ? "bg-yellow-300" : "bg-white/50"
+                    index === currentBannerIndex ? "bg-yellow-400" : "bg-white/50"
                   }`}
                 />
               ))}
