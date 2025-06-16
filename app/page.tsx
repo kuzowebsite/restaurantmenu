@@ -594,7 +594,7 @@ export default function FoodDeliveryApp() {
             </div>
           </div>
           <h3 className="text-xl font-bold text-white mb-2">Ачааллаж байна...</h3>
-          <p className="text-gray-400">Амттай хоолны мэдээлэл</p>
+          <p className="text-gray-400">Та түр хүлээн үү...</p>
         </div>
       </div>
     )
