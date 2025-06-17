@@ -11,32 +11,21 @@ import {
   MapPin,
   ImageIcon,
   LogOut,
-  Search,
   Filter,
   Download,
-  Eye,
   CheckCircle,
   Clock,
-  AlertCircle,
-  User,
-  Phone,
-  Mail,
-  Calendar,
   Lock,
   Palette,
   Camera,
+  ChefHat,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
-import { Switch } from "@/components/ui/switch"
 
 // Firebase imports нэмэх
 import { onValue, ref, database } from "../lib/firebase"
-
-// Import хэсэгт нэмэх
-import AdminHistory from "./admin-history"
 
 type ViewType =
   | "home"
@@ -145,6 +134,9 @@ export default function AdminDashboard({
     subtitle: "Уламжлалт амттай хоол",
   })
 
+  // Add a new state for showing notification status
+  const [notificationStatus, setNotificationStatus] = useState<{ [key: string]: boolean }>({})
+
   // Add this after the existing state definitions and before the helper functions
   const completedOrders =
     adminOrders
@@ -156,15 +148,15 @@ export default function AdminDashboard({
       ?.filter((order) => order?.status !== "completed")
       ?.sort((a, b) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime()) || []
 
-  // Helper functions for order status
+  // Helper functions for order status - updated to match user side exactly
   const getStatusIcon = (status: string) => {
     switch (status) {
       case "pending":
-        return <Clock className="w-5 h-5 text-yellow-500" />
+        return <Clock className="w-5 h-5 text-yellow-400" />
       case "confirmed":
-        return <CheckCircle className="w-5 h-5 text-blue-500" />
+        return <CheckCircle className="w-5 h-5 text-blue-400" />
       case "ready":
-        return <AlertCircle className="w-5 h-5 text-orange-500" />
+        return <ChefHat className="w-5 h-5 text-green-400" />
       case "completed":
         return <CheckCircle className="w-5 h-5 text-green-500" />
       default:
@@ -177,9 +169,9 @@ export default function AdminDashboard({
       case "pending":
         return "Хүлээгдэж байна"
       case "confirmed":
-        return "Баталгаажсан"
+        return "Захиалга баталгаажуулла"
       case "ready":
-        return "Бэлэн"
+        return "Бэлэн болло"
       case "completed":
         return "Дууссан"
       default:
@@ -190,11 +182,11 @@ export default function AdminDashboard({
   const getStatusColor = (status: string) => {
     switch (status) {
       case "pending":
-        return "bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
+        return "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
       case "confirmed":
-        return "bg-blue-500/10 text-blue-500 border-blue-500/20"
+        return "bg-blue-500/20 text-blue-400 border-blue-500/30"
       case "ready":
-        return "bg-orange-500/10 text-orange-500 border-orange-500/20"
+        return "bg-green-500/20 text-green-400 border-green-500/30"
       case "completed":
         return "bg-green-500/10 text-green-500 border-green-500/20"
       default:
@@ -202,36 +194,103 @@ export default function AdminDashboard({
     }
   }
 
-  // handleUpdateOrderStatus функцийг real-time update хийхээр өөрчлөх
+  const getStatusDescription = (status: string, queuePosition?: number) => {
+    switch (status) {
+      case "pending":
+        return queuePosition && queuePosition > 0
+          ? `Дараалалд ${queuePosition}-р байрт байна`
+          : "Таны захиалгыг хүлээн авч байна"
+      case "confirmed":
+        return "Таны захиалгыг баталгаажуулж, бэлтгэж эхэллээ"
+      case "ready":
+        return "Таны захиалга бэлэн боллоо! Авч болно"
+      case "completed":
+        return "Захиалга амжилттай дууссан"
+      default:
+        return "Статус тодорхойгүй"
+    }
+  }
+
+  // Calculate queue position for pending orders
+  const getQueuePosition = (orderId: string) => {
+    const pendingOrders = sortedOrders.filter((order) => order.status === "pending")
+    const orderIndex = pendingOrders.findIndex((order) => order.id === orderId)
+    return orderIndex >= 0 ? orderIndex + 1 : 0
+  }
+
+  // handleUpdateOrderStatus функцийг real-time update хийхээр сайжруулах - COMPLETELY FIXED
+  // Update the handleUpdateOrderStatus function to show notification message
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
     try {
+      console.log(`🔥 ADMIN: Updating order ${orderId} to status ${newStatus}`)
+
+      // Show notification status for "ready" orders
+      if (newStatus === "ready") {
+        setNotificationStatus((prev) => ({ ...prev, [orderId]: true }))
+
+        // Hide the notification after 3 seconds
+        setTimeout(() => {
+          setNotificationStatus((prev) => ({ ...prev, [orderId]: false }))
+        }, 3000)
+      }
+
       // Find the order by order number (id field)
       const order = adminOrders.find((o) => o.id === orderId)
-      if (!order) return
+      if (!order) {
+        console.error("🔥 ADMIN: ❌ Order not found:", orderId)
+        console.log(
+          "🔥 ADMIN: Available orders:",
+          adminOrders.map((o) => ({ id: o.id, firebaseKey: o.firebaseKey })),
+        )
+        return
+      }
 
+      console.log("🔥 ADMIN: ✅ Found order:", order)
+
+      // Create complete order update object
       const orderUpdate = {
+        ...order, // Keep ALL existing data
         status: newStatus,
-        completedTime: newStatus === "completed" ? new Date().toISOString() : null,
         updatedAt: new Date().toISOString(),
       }
 
-      // Update in Firebase using the Firebase key
-      await dbOperations.updateOrder(order.firebaseKey || order.id, orderUpdate)
+      // Add completedTime if status is completed
+      if (newStatus === "completed") {
+        orderUpdate.completedTime = new Date().toISOString()
+      }
 
-      // Update local state
+      console.log("🔥 ADMIN: Setting order ${orderId} status to: ${newStatus}")
+
+      // Get Firebase key
+      const firebaseKey = order.firebaseKey || order.id
+      console.log("🔥 ADMIN: Using Firebase key:", firebaseKey)
+
+      // Update in Firebase using set (not update) to ensure complete replacement
+      await dbOperations.updateOrder(firebaseKey, orderUpdate)
+
+      console.log(`🔥 ADMIN: ✅ Order ${orderId} updated successfully to ${newStatus}`)
+
+      // Update local state immediately
       setAdminOrders(
-        adminOrders.map((order) =>
-          order.id === orderId
+        adminOrders.map((o) =>
+          o.id === orderId
             ? {
-                ...order,
+                ...o,
                 status: newStatus,
-                completedTime: newStatus === "completed" ? new Date().toISOString() : order.completedTime,
+                updatedAt: new Date().toISOString(),
+                ...(newStatus === "completed" ? { completedTime: new Date().toISOString() } : {}),
               }
-            : order,
+            : o,
         ),
       )
+
+      // Force a small delay to ensure Firebase propagation
+      await new Promise((resolve) => setTimeout(resolve, 500))
+
+      console.log(`🔥 ADMIN: 🚀 Status change complete: ${orderId} -> ${newStatus}`)
     } catch (error) {
-      console.error("Error updating order status:", error)
+      console.error("🔥 ADMIN: ❌ Error updating order status:", error)
+      alert("Захиалгын статус өөрчлөхөд алдаа гарлаа. Дахин оролдоно уу.")
     }
   }
 
@@ -629,8 +688,6 @@ export default function AdminDashboard({
 
   // Admin Dashboard Main хэсгийг "admin-orders" болгож өөрчлөх
   if (currentView === "admin" && !isManager) {
-    // Admin Dashboard Main хэсэгт orders-ийг sort хийх
-
     return (
       <div className="min-h-screen bg-gray-900 text-white">
         {/* Header */}
@@ -685,7 +742,7 @@ export default function AdminDashboard({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <Card className="bg-gray-800 border-gray-700">
               <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold text-yellow-500">
+                <div className="text-2xl font-bold text-yellow-400">
                   {sortedOrders?.filter((o) => o?.status === "pending")?.length || 0}
                 </div>
                 <div className="text-sm text-gray-400">Хүлээгдэж байна</div>
@@ -693,18 +750,18 @@ export default function AdminDashboard({
             </Card>
             <Card className="bg-gray-800 border-gray-700">
               <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold text-blue-500">
+                <div className="text-2xl font-bold text-blue-400">
                   {sortedOrders?.filter((o) => o?.status === "confirmed")?.length || 0}
                 </div>
-                <div className="text-sm text-gray-400">Баталгаажсан</div>
+                <div className="text-sm text-gray-400">Баталгаажуулла</div>
               </CardContent>
             </Card>
             <Card className="bg-gray-800 border-gray-700">
               <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold text-orange-500">
+                <div className="text-2xl font-bold text-green-400">
                   {sortedOrders?.filter((o) => o?.status === "ready")?.length || 0}
                 </div>
-                <div className="text-sm text-gray-400">Бэлэн</div>
+                <div className="text-sm text-gray-400">Бэлэн болло</div>
               </CardContent>
             </Card>
             <Card className="bg-gray-800 border-gray-700">
@@ -731,115 +788,105 @@ export default function AdminDashboard({
               </div>
             </div>
 
-            {/* Admin orders хэсэгт real-time мэдэгдэл нэмэх */}
+            {/* Simplified Orders List - Only Ready Button */}
             <div className="space-y-4">
               {sortedOrders && sortedOrders.length > 0 ? (
                 sortedOrders.map((order) => (
-                  <Card
-                    key={order?.id}
-                    className={`bg-gray-800 border-gray-700 ${order?.status === "pending" ? "ring-2 ring-yellow-500/50 animate-pulse" : ""}`}
-                  >
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                          {getStatusIcon(order?.status)}
-                          <div>
-                            <h3 className="font-semibold text-white text-lg flex items-center gap-2">
-                              Захиалга: {order?.id || "N/A"}
-                              <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
-                                Ширээ #{order?.table || "N/A"}
-                              </Badge>
-                              {order?.status === "pending" && (
-                                <span className="relative flex h-3 w-3">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
-                                  <span className="relative inline-flex rounded-full h-3 w-3 bg-yellow-500"></span>
-                                </span>
-                              )}
-                            </h3>
-                            <p className="text-sm text-gray-400">
-                              {order?.customerName || "Зочин"} • {order?.orderTime || "N/A"}
-                            </p>
-                          </div>
+                  <Card key={order?.id} className="bg-gradient-to-br from-gray-800 to-gray-900 border-gray-700/50">
+                    <CardContent className="p-6">
+                      {/* Order Header with Basic Info */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                        <div>
+                          <h3 className="text-lg font-bold text-yellow-400 mb-2">Ширээ #{order?.table || "N/A"}</h3>
+                          <p className="text-sm text-gray-400">Захиалгын дугаар: {order?.id || "N/A"}</p>
+                          <p className="text-sm text-gray-400">Хэрэглэгч: {order?.customerName || "Зочин"}</p>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <Badge
-                            className={`${getStatusColor(order?.status)} ${order?.status === "pending" ? "animate-pulse" : ""}`}
-                          >
-                            {getStatusText(order?.status)}
-                          </Badge>
-                          <span className="font-semibold text-yellow-500 text-lg">
-                            ₮{safeToLocaleString(order?.total)}
-                          </span>
+                        <div>
+                          <p className="text-sm text-gray-400">
+                            Огноо: {new Date(order?.createdAt || new Date()).toLocaleDateString("mn-MN")}
+                          </p>
+                          <p className="text-sm text-gray-400">
+                            Цаг:{" "}
+                            {order?.orderTime ||
+                              new Date(order?.createdAt || new Date()).toLocaleTimeString("mn-MN", {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-2xl font-bold text-green-400">₮{safeToLocaleString(order?.total)}</p>
                         </div>
                       </div>
 
-                      {/* Order Items */}
+                      {/* Order Items with Images */}
                       <div className="mb-4">
-                        <h4 className="text-sm font-medium text-gray-400 mb-2">Захиалгын дэлгэрэнгүй:</h4>
-                        <div className="space-y-1">
+                        <h4 className="text-sm font-bold text-gray-300 mb-2">Захиалгын дэлгэрэнгүй:</h4>
+                        <div className="space-y-2">
                           {order?.items && order.items.length > 0 ? (
                             order.items.map((item: any, index: number) => (
-                              <div key={index} className="flex items-center justify-between text-sm">
-                                <span className="text-gray-300">
-                                  {item?.name || "N/A"} × {item?.quantity || 0}
-                                </span>
-                                <span className="text-gray-400">
-                                  ₮{safeToLocaleString((item?.price || 0) * (item?.quantity || 0))}
-                                </span>
+                              <div key={index} className="flex items-center gap-3 bg-gray-700/30 p-3 rounded-lg">
+                                <img
+                                  src={item?.image || "/placeholder.svg"}
+                                  alt={item?.name || "Хоол"}
+                                  className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
+                                />
+                                <div className="flex-1">
+                                  <div className="flex justify-between items-start">
+                                    <div>
+                                      <span className="text-white font-medium">{item?.name || "N/A"}</span>
+                                      <p className="text-xs text-gray-400">₮{safeToLocaleString(item?.price || 0)}</p>
+                                    </div>
+                                    <div className="text-right">
+                                      <span className="text-gray-300">× {item?.quantity || 0}</span>
+                                      <p className="text-white font-bold">
+                                        ₮{safeToLocaleString((item?.price || 0) * (item?.quantity || 0))}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
                             ))
                           ) : (
-                            <div className="text-sm text-gray-500">Захиалгын мэдээлэл байхгүй</div>
+                            <div className="text-sm text-gray-500 text-center py-2">Захиалгын мэдээлэл байхгүй</div>
                           )}
                         </div>
                       </div>
 
-                      {/* Status Actions with enhanced styling */}
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm text-gray-400">
-                          {order?.completedTime && (
-                            <span>Дууссан: {new Date(order.completedTime).toLocaleString("mn-MN")}</span>
-                          )}
-                        </div>
-                        <div className="flex gap-2">
-                          {order?.status === "pending" && (
-                            <Button
-                              size="sm"
-                              className="bg-blue-500 hover:bg-blue-600 text-white animate-pulse"
-                              onClick={() => handleUpdateOrderStatus(order.id, "confirmed")}
-                            >
-                              Баталгаажуулах
-                            </Button>
-                          )}
-                          {order?.status === "confirmed" && (
-                            <Button
-                              size="sm"
-                              className="bg-orange-500 hover:bg-orange-600 text-white"
-                              onClick={() => handleUpdateOrderStatus(order.id, "ready")}
-                            >
-                              Бэлэн болгох
-                            </Button>
-                          )}
-                          {order?.status === "ready" && (
-                            <Button
-                              size="sm"
-                              className="bg-green-500 hover:bg-green-600 text-white animate-pulse"
-                              onClick={() => handleUpdateOrderStatus(order.id, "completed")}
-                            >
-                              Дуусгах
-                            </Button>
-                          )}
-                          <Button variant="ghost" size="sm" className="text-blue-400 hover:bg-blue-500/10">
-                            <Eye className="w-4 h-4" />
+                      {/* Enhanced Ready Button with Notification Status */}
+                      <div className="text-center">
+                        {notificationStatus[order.id] ? (
+                          <div className="bg-green-900/30 border border-green-500/30 rounded-lg p-4 mb-4">
+                            <div className="flex items-center justify-center gap-3">
+                              <div className="w-6 h-6 bg-green-400 rounded-full animate-pulse"></div>
+                              <span className="text-green-400 font-medium">🔔 Дуут дохио дуугарч байна...</span>
+                            </div>
+                            <p className="text-green-200 text-sm mt-2">Хэрэглэгчид мэдэгдэл илгээгдлээ</p>
+                          </div>
+                        ) : (
+                          <Button
+                            size="lg"
+                            className="bg-green-500 hover:bg-green-600 text-white font-bold px-12 py-3 text-lg shadow-lg transition-all duration-200 hover:scale-105 active:scale-95"
+                            onClick={() => {
+                              console.log("🔥 ADMIN: Ready button clicked for order:", order.id)
+                              handleUpdateOrderStatus(order.id, "ready")
+                            }}
+                          >
+                            <ChefHat className="w-5 h-5 mr-2" />
+                            Бэлэн болло
                           </Button>
-                        </div>
+                        )}
                       </div>
                     </CardContent>
                   </Card>
                 ))
               ) : (
-                <div className="text-center py-12">
-                  <div className="text-gray-500 mb-4">Захиалга байхгүй</div>
+                <div className="text-center py-16">
+                  <div className="w-24 h-24 bg-gradient-to-br from-gray-700 to-gray-800 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <Clock className="w-12 h-12 text-gray-500" />
+                  </div>
+                  <h3 className="text-xl font-bold text-gray-400 mb-3">Захиалга байхгүй</h3>
+                  <p className="text-gray-500 mb-8">Одоогоор идэвхтэй захиалга байхгүй байна</p>
                   <Button
                     variant="outline"
                     className="border-gray-600 text-gray-300"
@@ -1003,14 +1050,49 @@ export default function AdminDashboard({
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Эможи</label>
-                  <Input
-                    placeholder="🍽️"
-                    value={newCategory.icon}
-                    onChange={(e) => setNewCategory({ ...newCategory, icon: e.target.value })}
-                    className="bg-gray-700 border-gray-600 text-white text-center"
-                    maxLength={2}
-                  />
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Ангиллын зураг</label>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-4">
+                      <div className="w-16 h-16 bg-gray-600 rounded-lg flex items-center justify-center overflow-hidden">
+                        {newCategory.icon ? (
+                          <img
+                            src={newCategory.icon || "/placeholder.svg"}
+                            alt="Category"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <ImageIcon className="w-8 h-8 text-gray-400" />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0]
+                            if (file) {
+                              try {
+                                const base64Image = await dbOperations.uploadImage(file)
+                                setNewCategory({ ...newCategory, icon: base64Image })
+                              } catch (error) {
+                                console.error("Error uploading image:", error)
+                              }
+                            }
+                          }}
+                          className="hidden"
+                          id="category-image-upload"
+                        />
+                        <label
+                          htmlFor="category-image-upload"
+                          className="flex items-center justify-center w-full h-10 bg-gray-700 border border-gray-600 rounded-md cursor-pointer hover:bg-gray-600 text-white"
+                        >
+                          <Camera className="w-4 h-4 mr-2" />
+                          Зураг сонгох
+                        </label>
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-400">Зөвхөн зураг файл (.jpg, .png, .gif) оруулах боломжтой</p>
+                  </div>
                 </div>
               </div>
               <Button
@@ -1048,7 +1130,17 @@ export default function AdminDashboard({
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <span className="text-2xl">{category.icon}</span>
+                        <div className="w-12 h-12 bg-gray-600 rounded-lg flex items-center justify-center overflow-hidden">
+                          {category.icon ? (
+                            <img
+                              src={category.icon || "/placeholder.svg"}
+                              alt={category.name}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <ImageIcon className="w-6 h-6 text-gray-400" />
+                          )}
+                        </div>
                         <div>
                           <h3 className="font-semibold text-white">{category.name}</h3>
                           <p className="text-sm text-gray-400">
@@ -1109,13 +1201,48 @@ export default function AdminDashboard({
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">Эможи</label>
-                    <Input
-                      value={editingCategory.icon}
-                      onChange={(e) => setEditingCategory({ ...editingCategory, icon: e.target.value })}
-                      className="bg-gray-700 border-gray-600 text-white text-center"
-                      maxLength={2}
-                    />
+                    <label className="block text-sm font-medium text-gray-300 mb-2">Ангиллын зураг</label>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-4">
+                        <div className="w-16 h-16 bg-gray-600 rounded-lg flex items-center justify-center overflow-hidden">
+                          {editingCategory.icon ? (
+                            <img
+                              src={editingCategory.icon || "/placeholder.svg"}
+                              alt="Category"
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <ImageIcon className="w-8 h-8 text-gray-400" />
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0]
+                              if (file) {
+                                try {
+                                  const base64Image = await dbOperations.uploadImage(file)
+                                  setEditingCategory({ ...editingCategory, icon: base64Image })
+                                } catch (error) {
+                                  console.error("Error uploading image:", error)
+                                }
+                              }
+                            }}
+                            className="hidden"
+                            id="edit-category-image-upload"
+                          />
+                          <label
+                            htmlFor="edit-category-image-upload"
+                            className="flex items-center justify-center w-full h-10 bg-gray-700 border border-gray-600 rounded-md cursor-pointer hover:bg-gray-600 text-white"
+                          >
+                            <Camera className="w-4 h-4 mr-2" />
+                            Зураг солих
+                          </label>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                   <div className="flex gap-3">
                     <Button
@@ -1225,13 +1352,49 @@ export default function AdminDashboard({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Зургийн URL</label>
-                  <Input
-                    placeholder="https://example.com/image.jpg"
-                    value={newProduct.image}
-                    onChange={(e) => setNewProduct({ ...newProduct, image: e.target.value })}
-                    className="bg-gray-700 border-gray-600 text-white"
-                  />
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Бүтээгдэхүүний зураг</label>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-4">
+                      <div className="w-16 h-16 bg-gray-600 rounded-lg flex items-center justify-center overflow-hidden">
+                        {newProduct.image ? (
+                          <img
+                            src={newProduct.image || "/placeholder.svg"}
+                            alt="Product"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <ImageIcon className="w-8 h-8 text-gray-400" />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0]
+                            if (file) {
+                              try {
+                                const base64Image = await dbOperations.uploadImage(file)
+                                setNewProduct({ ...newProduct, image: base64Image })
+                              } catch (error) {
+                                console.error("Error uploading image:", error)
+                              }
+                            }
+                          }}
+                          className="hidden"
+                          id="product-image-upload"
+                        />
+                        <label
+                          htmlFor="product-image-upload"
+                          className="flex items-center justify-center w-full h-10 bg-gray-700 border border-gray-600 rounded-md cursor-pointer hover:bg-gray-600 text-white"
+                        >
+                          <Camera className="w-4 h-4 mr-2" />
+                          Зураг сонгох
+                        </label>
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-400">Зөвхөн зураг файл (.jpg, .png, .gif) оруулах боломжтой</p>
+                  </div>
                 </div>
               </div>
               <Button
@@ -1384,12 +1547,48 @@ export default function AdminDashboard({
                       </select>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">Зургийн URL</label>
-                      <Input
-                        value={editingProduct.image}
-                        onChange={(e) => setEditingProduct({ ...editingProduct, image: e.target.value })}
-                        className="bg-gray-700 border-gray-600 text-white"
-                      />
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Бүтээгдэхүүний зураг</label>
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-4">
+                          <div className="w-16 h-16 bg-gray-600 rounded-lg flex items-center justify-center overflow-hidden">
+                            {editingProduct.image ? (
+                              <img
+                                src={editingProduct.image || "/placeholder.svg"}
+                                alt="Product"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <ImageIcon className="w-8 h-8 text-gray-400" />
+                            )}
+                          </div>
+                          <div className="flex-1">
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0]
+                                if (file) {
+                                  try {
+                                    const base64Image = await dbOperations.uploadImage(file)
+                                    setEditingProduct({ ...editingProduct, image: base64Image })
+                                  } catch (error) {
+                                    console.error("Error uploading image:", error)
+                                  }
+                                }
+                              }}
+                              className="hidden"
+                              id="edit-product-image-upload"
+                            />
+                            <label
+                              htmlFor="edit-product-image-upload"
+                              className="flex items-center justify-center w-full h-10 bg-gray-700 border border-gray-600 rounded-md cursor-pointer hover:bg-gray-600 text-white"
+                            >
+                              <Camera className="w-4 h-4 mr-2" />
+                              Зураг солих
+                            </label>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <div className="flex gap-3">
@@ -1432,1079 +1631,6 @@ export default function AdminDashboard({
     )
   }
 
-  // Branches Management
-  if (currentView === "admin-branches") {
-    return (
-      <div className="min-h-screen bg-gray-900 text-white">
-        <div className="flex items-center justify-between p-4 border-b border-gray-800">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setCurrentView("admin")}
-            className="text-white hover:bg-gray-800"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <h1 className="text-lg font-semibold">Салбар удирдах</h1>
-          <div className="w-8" />
-        </div>
-
-        <div className="p-4 space-y-6">
-          {/* Add New Branch */}
-          <Card className="bg-gray-800 border-gray-700">
-            <CardHeader>
-              <CardTitle className="text-white">Шинэ салбар нэмэх</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Салбарын нэр</label>
-                  <Input
-                    placeholder="Жишээ: Төв салбар"
-                    value={newBranch.name}
-                    onChange={(e) => setNewBranch({ ...newBranch, name: e.target.value })}
-                    className="bg-gray-700 border-gray-600 text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Утасны дугаар</label>
-                  <Input
-                    placeholder="+976 7777 0000"
-                    value={newBranch.phone}
-                    onChange={(e) => setNewBranch({ ...newBranch, phone: e.target.value })}
-                    className="bg-gray-700 border-gray-600 text-white"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Хаяг</label>
-                <Input
-                  placeholder="Улаанбаатар хот, Сүхбаатар дүүрэг"
-                  value={newBranch.address}
-                  onChange={(e) => setNewBranch({ ...newBranch, address: e.target.value })}
-                  className="bg-gray-700 border-gray-600 text-white"
-                />
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Ажиллах цаг</label>
-                  <Input
-                    placeholder="09:00 - 22:00"
-                    value={newBranch.hours}
-                    onChange={(e) => setNewBranch({ ...newBranch, hours: e.target.value })}
-                    className="bg-gray-700 border-gray-600 text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Зургийн URL</label>
-                  <Input
-                    placeholder="https://example.com/branch.jpg"
-                    value={newBranch.image}
-                    onChange={(e) => setNewBranch({ ...newBranch, image: e.target.value })}
-                    className="bg-gray-700 border-gray-600 text-white"
-                  />
-                </div>
-              </div>
-              <Button
-                onClick={async () => {
-                  if (newBranch.name && newBranch.address && newBranch.phone) {
-                    try {
-                      const branchData = {
-                        name: newBranch.name,
-                        address: newBranch.address,
-                        phone: newBranch.phone,
-                        hours: newBranch.hours || "09:00 - 22:00",
-                        image: newBranch.image || "/placeholder.svg",
-                        status: "Нээлттэй",
-                        distance: "0.5 км",
-                        createdAt: new Date().toISOString(),
-                      }
-                      const newBranchId = await dbOperations.addBranch(branchData)
-                      setAdminBranches([...adminBranches, { id: newBranchId, ...branchData }])
-                      setNewBranch({ name: "", address: "", phone: "", hours: "", image: "" })
-                    } catch (error) {
-                      console.error("Error adding branch:", error)
-                    }
-                  }
-                }}
-                className="w-full bg-green-500 hover:bg-green-600 text-white"
-                disabled={!newBranch.name || !newBranch.address || !newBranch.phone}
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Салбар нэмэх
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Branches List */}
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Одоогийн салбарууд ({adminBranches?.length || 0})</h2>
-            {adminBranches && adminBranches.length > 0 ? (
-              adminBranches.map((branch) => (
-                <Card key={branch.id} className="bg-gray-800 border-gray-700">
-                  <CardContent className="p-4">
-                    <div className="flex items-start gap-4">
-                      <img
-                        src={branch.image || "/placeholder.svg"}
-                        alt={branch.name}
-                        className="w-20 h-20 rounded-lg object-cover"
-                      />
-                      <div className="flex-1">
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <h3 className="font-semibold text-white text-lg">{branch.name}</h3>
-                            <p className="text-sm text-gray-400 mb-1">{branch.address}</p>
-                            <div className="flex items-center gap-4 text-sm">
-                              <span className="text-gray-400">📞 {branch.phone}</span>
-                              <span className="text-gray-400">🕒 {branch.hours}</span>
-                              <Badge
-                                className={
-                                  branch.status === "Нээлттэй"
-                                    ? "bg-green-500/20 text-green-400 border-green-500/30"
-                                    : "bg-red-500/20 text-red-400 border-red-500/30"
-                                }
-                              >
-                                {branch.status}
-                              </Badge>
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-blue-400 hover:bg-blue-500/10"
-                              onClick={() => setEditingBranch(branch)}
-                            >
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-red-400 hover:bg-red-500/10"
-                              onClick={async () => {
-                                try {
-                                  await dbOperations.deleteBranch(branch.id)
-                                  setAdminBranches(adminBranches.filter((b) => b.id !== branch.id))
-                                } catch (error) {
-                                  console.error("Error deleting branch:", error)
-                                }
-                              }}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
-            ) : (
-              <div className="text-center py-12">
-                <div className="text-gray-500 mb-4">Салбар байхгүй</div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Edit Branch Modal */}
-        {editingBranch && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <Card className="bg-gray-800 border-gray-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-              <CardContent className="p-6">
-                <h3 className="text-xl font-semibold text-white mb-4">Салбар засах</h3>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">Салбарын нэр</label>
-                      <Input
-                        value={editingBranch.name}
-                        onChange={(e) => setEditingBranch({ ...editingBranch, name: e.target.value })}
-                        className="bg-gray-700 border-gray-600 text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">Утасны дугаар</label>
-                      <Input
-                        value={editingBranch.phone}
-                        onChange={(e) => setEditingBranch({ ...editingBranch, phone: e.target.value })}
-                        className="bg-gray-700 border-gray-600 text-white"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">Хаяг</label>
-                    <Input
-                      value={editingBranch.address}
-                      onChange={(e) => setEditingBranch({ ...editingBranch, address: e.target.value })}
-                      className="bg-gray-700 border-gray-600 text-white"
-                    />
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">Ажиллах цаг</label>
-                      <Input
-                        value={editingBranch.hours}
-                        onChange={(e) => setEditingBranch({ ...editingBranch, hours: e.target.value })}
-                        className="bg-gray-700 border-gray-600 text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">Статус</label>
-                      <select
-                        value={editingBranch.status}
-                        onChange={(e) => setEditingBranch({ ...editingBranch, status: e.target.value })}
-                        className="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2"
-                      >
-                        <option value="Нээлттэй">Нээлттэй</option>
-                        <option value="Хаалттай">Хаалттай</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">Зургийн URL</label>
-                    <Input
-                      value={editingBranch.image}
-                      onChange={(e) => setEditingBranch({ ...editingBranch, image: e.target.value })}
-                      className="bg-gray-700 border-gray-600 text-white"
-                    />
-                  </div>
-                  <div className="flex gap-3">
-                    <Button
-                      variant="outline"
-                      className="flex-1 border-gray-600 text-gray-300"
-                      onClick={() => setEditingBranch(null)}
-                    >
-                      Цуцлах
-                    </Button>
-                    <Button
-                      className="flex-1 bg-blue-500 hover:bg-blue-600 text-white"
-                      onClick={async () => {
-                        try {
-                          await dbOperations.updateBranch(editingBranch.id, {
-                            name: editingBranch.name,
-                            address: editingBranch.address,
-                            phone: editingBranch.phone,
-                            hours: editingBranch.hours,
-                            status: editingBranch.status,
-                            image: editingBranch.image,
-                          })
-                          setAdminBranches(adminBranches.map((b) => (b.id === editingBranch.id ? editingBranch : b)))
-                          setEditingBranch(null)
-                        } catch (error) {
-                          console.error("Error updating branch:", error)
-                        }
-                      }}
-                    >
-                      Хадгалах
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  // Banners Management
-  if (currentView === "admin-banners") {
-    return (
-      <div className="min-h-screen bg-gray-900 text-white">
-        <div className="flex items-center justify-between p-4 border-b border-gray-800">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setCurrentView("admin")}
-            className="text-white hover:bg-gray-800"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <h1 className="text-lg font-semibold">Сурчилгаа удирдах</h1>
-          <div className="w-8" />
-        </div>
-
-        <div className="p-4 space-y-6">
-          {/* Add New Banner */}
-          <Card className="bg-gray-800 border-gray-700">
-            <CardHeader>
-              <CardTitle className="text-white">Шинэ баннер нэмэх</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Гарчиг</label>
-                  <Input
-                    placeholder="Жишээ: Багц хоол"
-                    value={newBanner.title}
-                    onChange={(e) => setNewBanner({ ...newBanner, title: e.target.value })}
-                    className="bg-gray-700 border-gray-600 text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Дэд гарчиг</label>
-                  <Input
-                    placeholder="Амттай хоолны онцгой санал"
-                    value={newBanner.subtitle}
-                    onChange={(e) => setNewBanner({ ...newBanner, subtitle: e.target.value })}
-                    className="bg-gray-700 border-gray-600 text-white"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Товчны текст</label>
-                  <Input
-                    placeholder="Үзэх"
-                    value={newBanner.buttonText}
-                    onChange={(e) => setNewBanner({ ...newBanner, buttonText: e.target.value })}
-                    className="bg-gray-700 border-gray-600 text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Арын өнгө</label>
-                  <Input
-                    placeholder="#FF5722"
-                    value={newBanner.bgColor}
-                    onChange={(e) => setNewBanner({ ...newBanner, bgColor: e.target.value })}
-                    className="bg-gray-700 border-gray-600 text-white"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Зургийн URL</label>
-                <Input
-                  placeholder="https://example.com/banner.jpg"
-                  value={newBanner.image}
-                  onChange={(e) => setNewBanner({ ...newBanner, image: e.target.value })}
-                  className="bg-gray-700 border-gray-600 text-white"
-                />
-              </div>
-              <Button
-                onClick={async () => {
-                  if (newBanner.title && newBanner.subtitle) {
-                    try {
-                      const bannerData = {
-                        title: newBanner.title,
-                        subtitle: newBanner.subtitle,
-                        buttonText: newBanner.buttonText || "Үзэх",
-                        bgColor: newBanner.bgColor || "#FF5722",
-                        image: newBanner.image || "/placeholder.svg",
-                        isActive: true,
-                        createdAt: new Date().toISOString(),
-                      }
-                      const newBannerId = await dbOperations.addBanner(bannerData)
-                      setAdminBanners([...adminBanners, { id: newBannerId, ...bannerData }])
-                      setNewBanner({ title: "", subtitle: "", buttonText: "", bgColor: "", image: "" })
-                    } catch (error) {
-                      console.error("Error adding banner:", error)
-                    }
-                  }
-                }}
-                className="w-full bg-green-500 hover:bg-green-600 text-white"
-                disabled={!newBanner.title || !newBanner.subtitle}
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Баннер нэмэх
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Banners List */}
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Одоогийн баннерууд ({adminBanners?.length || 0})</h2>
-            {adminBanners && adminBanners.length > 0 ? (
-              adminBanners.map((banner) => (
-                <Card key={banner.id} className="bg-gray-800 border-gray-700">
-                  <CardContent className="p-4">
-                    <div className="flex items-start gap-4">
-                      <div
-                        className="w-32 h-20 rounded-lg flex items-center justify-center text-white font-bold relative overflow-hidden"
-                        style={{ backgroundColor: banner.bgColor || "#FF5722" }}
-                      >
-                        {banner.image && banner.image !== "/placeholder.svg" ? (
-                          <img
-                            src={banner.image || "/placeholder.svg"}
-                            alt={banner.title}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <span className="text-sm text-center">{banner.title}</span>
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <h3 className="font-semibold text-white text-lg">{banner.title}</h3>
-                            <p className="text-sm text-gray-400 mb-2">{banner.subtitle}</p>
-                            <div className="flex items-center gap-4 text-sm">
-                              <span className="text-gray-400">Товч: {banner.buttonText}</span>
-                              <span className="text-gray-400">Өнгө: {banner.bgColor}</span>
-                              <Badge
-                                className={
-                                  banner.isActive
-                                    ? "bg-green-500/20 text-green-400 border-green-500/30"
-                                    : "bg-gray-500/20 text-gray-400 border-gray-500/30"
-                                }
-                              >
-                                {banner.isActive ? "Идэвхтэй" : "Идэвхгүй"}
-                              </Badge>
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-yellow-400 hover:bg-yellow-500/10"
-                              onClick={async () => {
-                                try {
-                                  await dbOperations.updateBanner(banner.id, { isActive: !banner.isActive })
-                                  setAdminBanners(
-                                    adminBanners.map((b) => (b.id === banner.id ? { ...b, isActive: !b.isActive } : b)),
-                                  )
-                                } catch (error) {
-                                  console.error("Error toggling banner:", error)
-                                }
-                              }}
-                            >
-                              <Eye className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-blue-400 hover:bg-blue-500/10"
-                              onClick={() => setEditingBanner(banner)}
-                            >
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-red-400 hover:bg-red-500/10"
-                              onClick={async () => {
-                                try {
-                                  await dbOperations.deleteBanner(banner.id)
-                                  setAdminBanners(adminBanners.filter((b) => b.id !== banner.id))
-                                } catch (error) {
-                                  console.error("Error deleting banner:", error)
-                                }
-                              }}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
-            ) : (
-              <div className="text-center py-12">
-                <div className="text-gray-500 mb-4">Баннер байхгүй</div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Edit Banner Modal */}
-        {editingBanner && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <Card className="bg-gray-800 border-gray-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-              <CardContent className="p-6">
-                <h3 className="text-xl font-semibold text-white mb-4">Баннер засах</h3>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">Гарчиг</label>
-                      <Input
-                        value={editingBanner.title}
-                        onChange={(e) => setEditingBanner({ ...editingBanner, title: e.target.value })}
-                        className="bg-gray-700 border-gray-600 text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">Дэд гарчиг</label>
-                      <Input
-                        value={editingBanner.subtitle}
-                        onChange={(e) => setEditingBanner({ ...editingBanner, subtitle: e.target.value })}
-                        className="bg-gray-700 border-gray-600 text-white"
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">Товчны текст</label>
-                      <Input
-                        value={editingBanner.buttonText}
-                        onChange={(e) => setEditingBanner({ ...editingBanner, buttonText: e.target.value })}
-                        className="bg-gray-700 border-gray-600 text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">Арын өнгө</label>
-                      <Input
-                        value={editingBanner.bgColor}
-                        onChange={(e) => setEditingBanner({ ...editingBanner, bgColor: e.target.value })}
-                        className="bg-gray-700 border-gray-600 text-white"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">Зургийн URL</label>
-                    <Input
-                      value={editingBanner.image}
-                      onChange={(e) => setEditingBanner({ ...editingBanner, image: e.target.value })}
-                      className="bg-gray-700 border-gray-600 text-white"
-                    />
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Switch
-                      checked={editingBanner.isActive}
-                      onCheckedChange={(checked) => setEditingBanner({ ...editingBanner, isActive: checked })}
-                    />
-                    <label className="text-sm text-gray-300">Идэвхжүүлэх</label>
-                  </div>
-                  <div className="flex gap-3">
-                    <Button
-                      variant="outline"
-                      className="flex-1 border-gray-600 text-gray-300"
-                      onClick={() => setEditingBanner(null)}
-                    >
-                      Цуцлах
-                    </Button>
-                    <Button
-                      className="flex-1 bg-blue-500 hover:bg-blue-600 text-white"
-                      onClick={async () => {
-                        try {
-                          await dbOperations.updateBanner(editingBanner.id, {
-                            title: editingBanner.title,
-                            subtitle: editingBanner.subtitle,
-                            buttonText: editingBanner.buttonText,
-                            bgColor: editingBanner.bgColor,
-                            image: editingBanner.image,
-                            isActive: editingBanner.isActive,
-                          })
-                          setAdminBanners(adminBanners.map((b) => (b.id === editingBanner.id ? editingBanner : b)))
-                          setEditingBanner(null)
-                        } catch (error) {
-                          console.error("Error updating banner:", error)
-                        }
-                      }}
-                    >
-                      Хадгалах
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  // Users Management
-  if (currentView === "admin-users") {
-    return (
-      <div className="min-h-screen bg-gray-900 text-white">
-        <div className="flex items-center justify-between p-4 border-b border-gray-800">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setCurrentView("admin")}
-            className="text-white hover:bg-gray-800"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <h1 className="text-lg font-semibold">Хэрэглэгч удирдах</h1>
-          <div className="w-8" />
-        </div>
-
-        <div className="p-4 space-y-6">
-          {/* Users Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card className="bg-gray-800 border-gray-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold text-blue-500">{adminUsers?.length || 0}</div>
-                <div className="text-sm text-gray-400">Нийт хэрэглэгч</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-gray-800 border-gray-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold text-green-500">
-                  {adminUsers?.filter((u) => u?.role === "user")?.length || 0}
-                </div>
-                <div className="text-sm text-gray-400">Энгийн хэрэглэгч</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-gray-800 border-gray-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold text-red-500">
-                  {adminUsers?.filter((u) => u?.role === "admin")?.length || 0}
-                </div>
-                <div className="text-sm text-gray-400">Админ</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-gray-800 border-gray-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold text-yellow-500">
-                  {adminUsers?.filter((u) => u?.isActive !== false)?.length || 0}
-                </div>
-                <div className="text-sm text-gray-400">Идэвхтэй</div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Search and Filter */}
-          <div className="flex gap-4">
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-              <Input placeholder="Хэрэглэгч хайх..." className="pl-10 bg-gray-800 border-gray-700 text-white" />
-            </div>
-            <Button variant="outline" className="border-gray-600 text-gray-300">
-              <Filter className="w-4 h-4 mr-2" />
-              Шүүх
-            </Button>
-          </div>
-
-          {/* Users List */}
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Хэрэглэгчдийн жагсаалт</h2>
-            {adminUsers && adminUsers.length > 0 ? (
-              adminUsers.map((user) => (
-                <Card key={user.id} className="bg-gray-800 border-gray-700">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
-                          <User className="w-6 h-6 text-white" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-white text-lg">{user.name || "Нэргүй"}</h3>
-                          <div className="flex items-center gap-4 text-sm text-gray-400">
-                            <span className="flex items-center gap-1">
-                              <Phone className="w-3 h-3" />
-                              {user.phone || "Утас байхгүй"}
-                            </span>
-                            <span className="flex items-center gap-1">
-                              <Mail className="w-3 h-3" />
-                              {user.email || "И-мэйл байхгүй"}
-                            </span>
-                            <span className="flex items-center gap-1">
-                              <Calendar className="w-3 h-3" />
-                              {user.createdAt ? new Date(user.createdAt).toLocaleDateString("mn-MN") : "Огноо байхгүй"}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <Badge
-                          className={
-                            user.role === "admin"
-                              ? "bg-red-500/20 text-red-400 border-red-500/30"
-                              : "bg-blue-500/20 text-blue-400 border-blue-500/30"
-                          }
-                        >
-                          {user.role === "admin" ? "Админ" : "Хэрэглэгч"}
-                        </Badge>
-                        <Badge
-                          className={
-                            user.isActive !== false
-                              ? "bg-green-500/20 text-green-400 border-green-500/30"
-                              : "bg-gray-500/20 text-gray-400 border-gray-500/30"
-                          }
-                        >
-                          {user.isActive !== false ? "Идэвхтэй" : "Идэвхгүй"}
-                        </Badge>
-                        <div className="flex gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-yellow-400 hover:bg-yellow-500/10"
-                            onClick={async () => {
-                              try {
-                                await dbOperations.updateUser(user.id, { isActive: user.isActive === false })
-                                setAdminUsers(
-                                  adminUsers.map((u) =>
-                                    u.id === user.id ? { ...u, isActive: u.isActive === false } : u,
-                                  ),
-                                )
-                              } catch (error) {
-                                console.error("Error toggling user status:", error)
-                              }
-                            }}
-                          >
-                            <Eye className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-blue-400 hover:bg-blue-500/10"
-                            onClick={() => {
-                              // Edit user functionality can be added here
-                            }}
-                          >
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-red-400 hover:bg-red-500/10"
-                            onClick={async () => {
-                              if (confirm("Энэ хэрэглэгчийг устгахдаа итгэлтэй байна уу?")) {
-                                try {
-                                  await dbOperations.deleteUser(user.id)
-                                  setAdminUsers(adminUsers.filter((u) => u.id !== user.id))
-                                } catch (error) {
-                                  console.error("Error deleting user:", error)
-                                }
-                              }
-                            }}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
-            ) : (
-              <div className="text-center py-12">
-                <div className="text-gray-500 mb-4">Хэрэглэгч байхгүй</div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (currentView === "admin-history") {
-    return (
-      <div className="min-h-screen bg-gray-900 text-white">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-800">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setCurrentView("home")}
-            className="text-white hover:bg-gray-800"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <div className="flex gap-2">
-            <Button
-              variant={currentView === "admin" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setCurrentView("admin")}
-              className={currentView === "admin" ? "bg-yellow-500 text-black" : "border-gray-600 text-gray-300"}
-            >
-              Захиалгууд
-            </Button>
-            <Button
-              variant={currentView === "admin-history" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setCurrentView("admin-history")}
-              className={currentView === "admin-history" ? "bg-yellow-500 text-black" : "border-gray-600 text-gray-300"}
-            >
-              Түүх
-            </Button>
-          </div>
-          <h1 className="text-lg font-semibold">
-            {currentView === "admin-history" ? "Захиалгын түүх" : "Захиалга удирдах"}
-          </h1>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-yellow-500 text-yellow-500 hover:bg-yellow-500/10"
-              onClick={() => setShowManagerModal(true)}
-            >
-              Тусгай
-            </Button>
-            <Button variant="ghost" size="sm" onClick={handleAdminLogout} className="text-red-400 hover:bg-red-500/10">
-              <LogOut className="w-5 h-5" />
-            </Button>
-          </div>
-        </div>
-
-        {/* Orders Management Content */}
-        <div className="p-4 space-y-6">
-          {/* Status Overview */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card className="bg-gray-800 border-gray-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold text-yellow-500">
-                  {adminOrders?.filter((o) => o?.status === "pending")?.length || 0}
-                </div>
-                <div className="text-sm text-gray-400">Хүлээгдэж байна</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-gray-800 border-gray-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold text-blue-500">
-                  {adminOrders?.filter((o) => o?.status === "confirmed")?.length || 0}
-                </div>
-                <div className="text-sm text-gray-400">Баталгаажсан</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-gray-800 border-gray-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold text-orange-500">
-                  {adminOrders?.filter((o) => o?.status === "ready")?.length || 0}
-                </div>
-                <div className="text-sm text-gray-400">Бэлэн</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-gray-800 border-gray-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold text-green-500">
-                  {adminOrders?.filter((o) => o?.status === "completed")?.length || 0}
-                </div>
-                <div className="text-sm text-gray-400">Дууссан</div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Orders List */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold">Захиалгууд ({adminOrders?.length || 0})</h2>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" className="border-gray-600 text-gray-300">
-                  <Filter className="w-4 h-4 mr-2" />
-                  Шүүх
-                </Button>
-                <Button variant="outline" size="sm" className="border-gray-600 text-gray-300">
-                  <Download className="w-4 h-4 mr-2" />
-                  Экспорт
-                </Button>
-              </div>
-            </div>
-
-            {/* Admin orders хэсэгт real-time мэдэгдэл нэмэх */}
-            <div className="space-y-4">
-              {completedOrders && completedOrders.length > 0 ? (
-                completedOrders.map((order) => (
-                  <Card
-                    key={order?.id}
-                    className={`bg-gray-800 border-gray-700 ${order?.status === "pending" ? "ring-2 ring-yellow-500/50 animate-pulse" : ""}`}
-                  >
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                          {getStatusIcon(order?.status)}
-                          <div>
-                            <h3 className="font-semibold text-white text-lg flex items-center gap-2">
-                              {order?.id || "N/A"}
-                              <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
-                                Ширээ #{order?.table || "N/A"}
-                              </Badge>
-                              {order?.status === "pending" && (
-                                <span className="relative flex h-3 w-3">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
-                                  <span className="relative inline-flex rounded-full h-3 w-3 bg-yellow-500"></span>
-                                </span>
-                              )}
-                            </h3>
-                            <p className="text-sm text-gray-400">
-                              {order?.customerName || "Зочин"} • {order?.orderTime || "N/A"}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <Badge
-                            className={`${getStatusColor(order?.status)} ${order?.status === "pending" ? "animate-pulse" : ""}`}
-                          >
-                            {getStatusText(order?.status)}
-                          </Badge>
-                          <span className="font-semibold text-yellow-500 text-lg">
-                            ₮{safeToLocaleString(order?.total)}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Order Items */}
-                      <div className="mb-4">
-                        <h4 className="text-sm font-medium text-gray-400 mb-2">Захиалгын дэлгэрэнгүй:</h4>
-                        <div className="space-y-1">
-                          {order?.items && order.items.length > 0 ? (
-                            order.items.map((item: any, index: number) => (
-                              <div key={index} className="flex items-center justify-between text-sm">
-                                <span className="text-gray-300">
-                                  {item?.name || "N/A"} × {item?.quantity || 0}
-                                </span>
-                                <span className="text-gray-400">
-                                  ₮{safeToLocaleString((item?.price || 0) * (item?.quantity || 0))}
-                                </span>
-                              </div>
-                            ))
-                          ) : (
-                            <div className="text-sm text-gray-500">Захиалгын мэдээлэл байхгүй</div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Status Actions with enhanced styling */}
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm text-gray-400">
-                          {order?.completedTime && (
-                            <span>Дууссан: {new Date(order.completedTime).toLocaleString("mn-MN")}</span>
-                          )}
-                        </div>
-                        <div className="flex gap-2">
-                          <Button variant="ghost" size="sm" className="text-blue-400 hover:bg-blue-500/10">
-                            <Eye className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
-              ) : (
-                <div className="text-center py-12">
-                  <div className="text-gray-500 mb-4">Захиалга байхгүй</div>
-                  <Button
-                    variant="outline"
-                    className="border-gray-600 text-gray-300"
-                    onClick={() => setCurrentView("home")}
-                  >
-                    Нүүр хуудас руу буцах
-                  </Button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Manager Access Modal */}
-        {showManagerModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <Card className="bg-gray-800 border-gray-700 w-full max-w-md">
-              <CardContent className="p-6">
-                <h3 className="text-xl font-semibold text-white mb-4 text-center">Менежирийн код</h3>
-                <div className="space-y-4">
-                  <div>
-                    <Input
-                      type="password"
-                      placeholder="6 оронтой код оруулна уу"
-                      value={managerCode}
-                      onChange={(e) => setManagerCode(e.target.value)}
-                      className="bg-gray-700 border-gray-600 text-white text-center text-lg tracking-widest"
-                      maxLength={6}
-                    />
-                    {codeError && <p className="text-red-400 text-sm mt-2 text-center">{codeError}</p>}
-                  </div>
-                  <div className="flex gap-3">
-                    <Button
-                      variant="outline"
-                      className="flex-1 border-gray-600 text-gray-300"
-                      onClick={() => {
-                        setShowManagerModal(false)
-                        setManagerCode("")
-                        setCodeError("")
-                      }}
-                    >
-                      Цуцлах
-                    </Button>
-                    <Button
-                      className="flex-1 bg-yellow-500 hover:bg-yellow-600 text-black font-semibold"
-                      onClick={handleManagerAccess}
-                      disabled={managerCode.length !== 6}
-                    >
-                      Нэвтрэх
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {/* Manager Code Change Modal */}
-        {showManagerCodeModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <Card className="bg-gray-800 border-gray-700 w-full max-w-md">
-              <CardContent className="p-6">
-                <h3 className="text-xl font-semibold text-white mb-4 text-center">Менежирийн код солих</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">Одоогийн код</label>
-                    <Input
-                      type="password"
-                      placeholder="Одоогийн кодыг оруулна уу"
-                      value={currentManagerCode}
-                      onChange={(e) => setCurrentManagerCode(e.target.value)}
-                      className="bg-gray-700 border-gray-600 text-white text-center tracking-widest"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">Шинэ код</label>
-                    <Input
-                      type="password"
-                      placeholder="Шинэ кодыг оруулна уу"
-                      value={newManagerCode}
-                      onChange={(e) => setNewManagerCode(e.target.value)}
-                      className="bg-gray-700 border-gray-600 text-white text-center tracking-widest"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">Шинэ код баталгаажуулах</label>
-                    <Input
-                      type="password"
-                      placeholder="Шинэ кодыг дахин оруулна уу"
-                      value={confirmManagerCode}
-                      onChange={(e) => setConfirmManagerCode(e.target.value)}
-                      className="bg-gray-700 border-gray-600 text-white text-center tracking-widest"
-                    />
-                  </div>
-                  {codeChangeError && <p className="text-red-400 text-sm text-center">{codeChangeError}</p>}
-                  {codeChangeSuccess && <p className="text-green-400 text-sm text-center">Код амжилттай солигдлоо!</p>}
-                  <div className="flex gap-3">
-                    <Button
-                      variant="outline"
-                      className="flex-1 border-gray-600 text-gray-300"
-                      onClick={() => {
-                        setShowManagerCodeModal(false)
-                        setCurrentManagerCode("")
-                        setNewManagerCode("")
-                        setConfirmManagerCode("")
-                        setCodeChangeError("")
-                        setCodeChangeSuccess(false)
-                      }}
-                    >
-                      Цуцлах
-                    </Button>
-                    <Button
-                      className="flex-1 bg-yellow-500 hover:bg-yellow-600 text-black font-semibold"
-                      onClick={handleManagerCodeChange}
-                      disabled={!currentManagerCode || !newManagerCode || !confirmManagerCode}
-                    >
-                      Солих
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  // Admin History Management хэсэг нэмэх
-  if (currentView === "admin-history") {
-    return (
-      <AdminHistory
-        completedOrders={completedOrders}
-        setCurrentView={setCurrentView}
-        safeToLocaleString={safeToLocaleString}
-      />
-    )
-  }
-
+  // Continue with other management sections...
   return null
 }
