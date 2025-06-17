@@ -5,13 +5,13 @@ import {
   Search,
   Star,
   Plus,
+  Minus,
   ArrowLeft,
   Home,
   User,
   ShoppingBag,
   Clock,
   CheckCircle,
-  ChefHat,
   Heart,
   Phone,
   Mail,
@@ -26,6 +26,8 @@ import {
   Sparkles,
   Award,
   Zap,
+  CreditCard,
+  RefreshCw,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -54,7 +56,7 @@ interface CartItem extends MenuItem {
 
 type OrderStatus = "pending" | "confirmed" | "ready" | "completed"
 
-type ViewType = "home" | "checkout" | "status" | "history" | "profile" | "favorites" | "branches"
+type ViewType = "home" | "checkout" | "status" | "history" | "profile" | "favorites" | "branches" | "payment"
 
 // Enhanced loading skeleton component for food cards
 function FoodCardSkeleton() {
@@ -91,7 +93,7 @@ export default function FoodDeliveryApp() {
   const [queuePosition, setQueuePosition] = useState<number>(0)
   const [audioRef, setAudioRef] = useState<HTMLAudioElement | null>(null)
   const [isOrderPickedUp, setIsOrderPickedUp] = useState(false)
-  const notificationIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const notificationIntervalRef = useRef<number | null>(null)
 
   const [showRatingModal, setShowRatingModal] = useState(false)
   const [selectedOrderForRating, setSelectedOrderForRating] = useState<any>(null)
@@ -135,10 +137,14 @@ export default function FoodDeliveryApp() {
 
   // Site branding state
   const [siteBranding, setSiteBranding] = useState({
-    logo: "", // This will now store base64 image data
-    name: "",
-    subtitle: "",
+    logo: "🍽️", // This will now store base64 image data
+    name: "Монгол ресторан",
+    subtitle: "Уламжлалт амттай хоол",
   })
+
+  // Payment state
+  const [isCheckingPayment, setIsCheckingPayment] = useState(false)
+  const [paymentVerified, setPaymentVerified] = useState(false)
 
   // Load data from Firebase on component mount
   useEffect(() => {
@@ -146,6 +152,11 @@ export default function FoodDeliveryApp() {
     checkAuthStatus()
     loadSiteBranding()
     loadOrderState() // Load order state from localStorage
+
+    // Request notification permission
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission()
+    }
   }, [])
 
   // Save order state to localStorage whenever it changes
@@ -241,12 +252,6 @@ export default function FoodDeliveryApp() {
   const loadFirebaseData = async () => {
     try {
       setDataLoading(true)
-
-      // Set maximum loading time to 4 seconds
-      const loadingTimeout = setTimeout(() => {
-        setDataLoading(false)
-      }, 4000)
-      
       const [firebaseCategories, firebaseMenuItems, firebaseBranches, firebaseBanners] = await Promise.all([
         dbOperations.getCategories(),
         dbOperations.getMenuItems(),
@@ -356,6 +361,16 @@ export default function FoodDeliveryApp() {
     })
   }
 
+  const updateCartQuantity = (itemId: number | string, newQuantity: number) => {
+    setCart((prev) => {
+      if (newQuantity <= 0) {
+        // Remove item from cart if quantity is 0 or less
+        return prev.filter((cartItem) => cartItem.id !== itemId)
+      }
+      return prev.map((cartItem) => (cartItem.id === itemId ? { ...cartItem, quantity: newQuantity } : cartItem))
+    })
+  }
+
   const toggleFavorite = (itemId: number | string) => {
     if (!isLoggedIn) {
       router.push("/login")
@@ -398,28 +413,31 @@ export default function FoodDeliveryApp() {
 
   // handlePayment функцийг Firebase-д захиалга хадгалахаар өөрчлөх
   const handlePayment = async () => {
-    // Generate order number
+    // Generate order number with consistent format
     const orderNum = `#${Math.floor(Math.random() * 1000)
       .toString()
       .padStart(3, "0")}`
 
     try {
-      // Create order data
+      // Create order data with proper structure
       const orderData = {
-        id: orderNum,
+        id: orderNum, // Use the same format consistently
         customerName: currentUser?.name || "Зочин",
         customerEmail: currentUser?.email || "",
         table: selectedTable,
         items: cart,
-        total: getTotal(),
+        total: getSubtotal(),
         status: "pending",
         paymentMethod: selectedPayment,
         orderTime: new Date().toLocaleString("mn-MN"),
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       }
 
-      // Save to Firebase
-      await dbOperations.addOrder(orderData)
+      // Save to Firebase and get the Firebase key
+      const firebaseKey = await dbOperations.addOrder(orderData)
+      console.log("Order saved to Firebase with key:", firebaseKey)
+      console.log("Order data saved:", orderData)
 
       setOrderNumber(orderNum)
       setOrderStatus("pending")
@@ -437,52 +455,167 @@ export default function FoodDeliveryApp() {
     }
   }
 
-  // Firebase-аас захиалгын статус real-time-аар сонсох listener нэмэх
+  // Handle bank payment
+  const handleBankPayment = (bankId: string) => {
+    setSelectedPayment(bankId)
+    setCurrentView("payment")
+  }
+
+  // Handle payment verification
+  const handlePaymentVerification = async () => {
+    setIsCheckingPayment(true)
+
+    // Simulate payment verification delay
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+
+    // Simulate random payment success/failure for demo
+    const isPaymentSuccessful = Math.random() > 0.3 // 70% success rate
+
+    setPaymentVerified(isPaymentSuccessful)
+    setIsCheckingPayment(false)
+
+    if (isPaymentSuccessful) {
+      // Auto redirect to order confirmation after 1 second
+      setTimeout(() => {
+        handlePayment()
+      }, 1000)
+    }
+  }
+
+  // Firebase-аас захиалгын статус real-time-аар сонсох listener нэмэх - FIXED with proper error handling
   useEffect(() => {
     if (orderNumber && currentView === "status") {
-      // Listen for order status changes
+      console.log("🔥 USER: Setting up Firebase listener for order:", orderNumber)
+
+      // Listen for order status changes in real-time
       const orderRef = ref(database, `orders`)
-      const unsubscribe = onValue(orderRef, (snapshot) => {
-        if (snapshot.exists()) {
-          const orders = Object.entries(snapshot.val()).map(([key, value]) => ({
-            firebaseKey: key,
-            ...value,
-          }))
+      let unsubscribe: () => void
 
-          // Find current order
-          const currentOrder = orders.find((order: any) => order.id === orderNumber)
+      try {
+        unsubscribe = onValue(
+          orderRef,
+          (snapshot) => {
+            try {
+              if (snapshot.exists()) {
+                const ordersData = snapshot.val()
+                console.log("🔥 USER: Raw Firebase data received")
 
-          if (currentOrder) {
-            // Update status if changed
-            if (currentOrder.status !== orderStatus) {
-              setOrderStatus(currentOrder.status)
+                // Convert Firebase data to array
+                const orders = Object.entries(ordersData || {})
+                  .map(([firebaseKey, orderData]) => {
+                    if (orderData && typeof orderData === "object") {
+                      return {
+                        firebaseKey,
+                        ...orderData,
+                      }
+                    }
+                    return null
+                  })
+                  .filter(Boolean)
 
-              // Initialize audio if status changes to ready
-              if (currentOrder.status === "ready") {
-                const audio = new Audio("/sounds/notification.mp3")
-                setAudioRef(audio)
-                audio.play().catch(console.error)
-                if ("vibrate" in navigator) {
-                  navigator.vibrate([200, 100, 200, 100, 300])
+                console.log("🔥 USER: Looking for order with ID:", orderNumber)
+
+                // Find current order - try multiple matching strategies
+                let currentOrder = null
+
+                // Strategy 1: Exact match
+                currentOrder = orders.find((order: any) => order.id === orderNumber)
+
+                // Strategy 2: Remove # and match
+                if (!currentOrder) {
+                  const cleanOrderNumber = orderNumber.replace("#", "")
+                  currentOrder = orders.find((order: any) => order.id?.replace("#", "") === cleanOrderNumber)
                 }
+
+                // Strategy 3: Contains match
+                if (!currentOrder) {
+                  currentOrder = orders.find(
+                    (order: any) =>
+                      order.id?.includes(orderNumber.replace("#", "")) ||
+                      orderNumber.includes(order.id?.replace("#", "")),
+                  )
+                }
+
+                if (currentOrder) {
+                  console.log("🔥 USER: ✅ Found matching order:", currentOrder)
+                  console.log("🔥 USER: Order status from Firebase:", currentOrder.status)
+                  console.log("🔥 USER: Current local status:", orderStatus)
+
+                  // Update status if different
+                  if (currentOrder.status && currentOrder.status !== orderStatus) {
+                    console.log(`🔥 USER: 🚀 STATUS CHANGE DETECTED: ${orderStatus} -> ${currentOrder.status}`)
+                    setOrderStatus(currentOrder.status)
+
+                    // Play notification for ready status
+                    if (currentOrder.status === "ready") {
+                      console.log("🔥 USER: 🔔 Order is ready! Playing notification...")
+                      const audio = new Audio("/sounds/notification.mp3")
+                      setAudioRef(audio)
+                      audio.play().catch(console.error)
+                      if ("vibrate" in navigator) {
+                        navigator.vibrate([200, 100, 200, 100, 300])
+                      }
+
+                      // Show browser notification if permission granted
+                      if (Notification.permission === "granted") {
+                        new Notification("Захиалга бэлэн!", {
+                          body: "Таны захиалга бэлэн боллоо. Тек дээр очиж авна уу.",
+                          icon: "/placeholder.svg?height=64&width=64",
+                        })
+                      }
+                    }
+                  } else {
+                    console.log("🔥 USER: ℹ️ Status unchanged or missing")
+                  }
+
+                  // Update queue position for pending orders
+                  if (currentOrder.status === "pending") {
+                    const pendingOrders = orders.filter((order: any) => order.status === "pending")
+                    const orderIndex = pendingOrders.findIndex(
+                      (order: any) =>
+                        order.id === orderNumber ||
+                        order.id?.replace("#", "") === orderNumber.replace("#", "") ||
+                        order.id?.includes(orderNumber.replace("#", "")) ||
+                        orderNumber.includes(order.id?.replace("#", "")),
+                    )
+                    const newQueuePosition = orderIndex >= 0 ? orderIndex + 1 : 0
+                    console.log("🔥 USER: Queue position:", newQueuePosition)
+                    setQueuePosition(newQueuePosition)
+                  } else {
+                    setQueuePosition(0)
+                  }
+                } else {
+                  console.log("🔥 USER: ❌ No matching order found!")
+                  console.log(
+                    "🔥 USER: Available order IDs:",
+                    orders.map((o: any) => o?.id),
+                  )
+                  console.log("🔥 USER: Searching for:", orderNumber)
+                }
+              } else {
+                console.log("🔥 USER: ❌ No orders data in Firebase")
               }
+            } catch (error) {
+              console.error("🔥 USER: ❌ Error processing Firebase data:", error)
             }
+          },
+          (error) => {
+            console.error("🔥 USER: ❌ Firebase listener error:", error)
+          },
+        )
+      } catch (error) {
+        console.error("🔥 USER: ❌ Error setting up Firebase listener:", error)
+        return
+      }
 
-            // Update queue position for pending orders
-            if (currentOrder.status === "pending") {
-              const pendingOrders = orders.filter((order: any) => order.status === "pending")
-              const orderIndex = pendingOrders.findIndex((order: any) => order.id === orderNumber)
-              setQueuePosition(orderIndex + 1) // Position in queue (1-based)
-            } else {
-              setQueuePosition(0)
-            }
-          }
+      return () => {
+        console.log("🔥 USER: 🧹 Cleaning up Firebase listener")
+        if (unsubscribe) {
+          unsubscribe()
         }
-      })
-
-      return () => unsubscribe()
+      }
     }
-  }, [orderNumber, currentView, orderStatus])
+  }, [orderNumber, currentView]) // Remove orderStatus dependency to prevent loops
 
   const handleOrderPickup = () => {
     setIsOrderPickedUp(true)
@@ -512,10 +645,6 @@ export default function FoodDeliveryApp() {
   const getSubtotal = () => {
     return cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
   }
-
-  const getDeliveryFee = () => 0
-  const getTax = () => Math.round(getSubtotal() * 0.1)
-  const getTotal = () => getSubtotal() + getTax()
 
   const filteredItems = menuItems.filter((item) => {
     const matchesCategory = item.category === activeCategory
@@ -600,7 +729,166 @@ export default function FoodDeliveryApp() {
             </div>
           </div>
           <h3 className="text-xl font-bold text-white mb-2">Ачааллаж байна...</h3>
-          <p className="text-gray-400">Та түр хүлээн үү...</p>
+          <p className="text-gray-400">Амттай хоолны мэдээлэл</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Payment View
+  if (currentView === "payment") {
+    const selectedBank = [
+      {
+        id: "khan",
+        name: "Хаан банк",
+        image: "/images/khan-bank-logo.png",
+        color: "from-blue-600 to-blue-700",
+      },
+      {
+        id: "state",
+        name: "Төрийн банк",
+        image: "/images/state-bank-logo.png",
+        color: "from-green-600 to-green-700",
+      },
+      {
+        id: "tdb",
+        name: "Худалдаа хөгжлийн банк",
+        image: "/images/tdb-logo.png",
+        color: "from-red-600 to-red-700",
+      },
+    ].find((bank) => bank.id === selectedPayment)
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white">
+        {/* Enhanced Header */}
+        <div className="relative bg-gradient-to-r from-purple-600 to-blue-600 p-6">
+          <div className="absolute inset-0 bg-black/20"></div>
+          <div className="relative flex items-center justify-between">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setCurrentView("checkout")}
+              className="text-white hover:bg-white/20 backdrop-blur-sm"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+            <div className="text-center">
+              <h1 className="text-xl font-bold">Төлбөр төлөх</h1>
+              <p className="text-sm text-white/80">{selectedBank?.name}</p>
+            </div>
+            <div className="w-8" />
+          </div>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {/* Bank Info */}
+          <Card className="bg-gradient-to-br from-gray-800 to-gray-900 border-gray-700/50">
+            <CardContent className="p-6">
+              <div className="flex items-center gap-4 mb-6">
+                <img
+                  src={selectedBank?.image || "/placeholder.svg"}
+                  alt={selectedBank?.name}
+                  className="w-16 h-16 rounded-lg object-cover"
+                />
+                <div>
+                  <h2 className="text-xl font-bold text-white">{selectedBank?.name}</h2>
+                  <p className="text-gray-400">Мобайл банк апп</p>
+                </div>
+              </div>
+
+              <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4 mb-6">
+                <p className="text-yellow-200 text-sm">
+                  {selectedBank?.name} апп руу шилжиж төлбөрөө хийнэ үү. Төлбөр хийсний дараа "Шалгах" товчийг дарна уу.
+                </p>
+              </div>
+
+              {/* Order Summary */}
+              <div className="space-y-3 mb-6">
+                <h3 className="font-bold text-white">Төлөх дүн</h3>
+                {cart.map((item) => (
+                  <div key={item.id} className="flex justify-between text-sm">
+                    <span className="text-gray-300">
+                      {item.name} × {item.quantity}
+                    </span>
+                    <span className="text-white">₮{(item.price * item.quantity).toLocaleString()}</span>
+                  </div>
+                ))}
+                <div className="border-t border-gray-600 pt-3">
+                  <div className="flex justify-between font-bold text-lg">
+                    <span className="text-white">Нийт дүн</span>
+                    <span className="text-green-400">₮{getSubtotal().toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Payment Status */}
+          {!paymentVerified && !isCheckingPayment && (
+            <Card className="bg-gradient-to-br from-gray-800 to-gray-900 border-gray-700/50">
+              <CardContent className="p-6 text-center">
+                <CreditCard className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                <h3 className="text-lg font-bold text-white mb-2">Төлбөр хүлээгдэж байна</h3>
+                <p className="text-gray-400 mb-6">
+                  {selectedBank?.name} апп дээр төлбөрөө хийсний дараа доорх товчийг дарна уу
+                </p>
+                <Button
+                  className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-bold py-4 text-lg shadow-lg"
+                  onClick={handlePaymentVerification}
+                >
+                  Шалгах
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Checking Payment */}
+          {isCheckingPayment && (
+            <Card className="bg-gradient-to-br from-blue-900/30 to-blue-800/30 border-blue-500/30">
+              <CardContent className="p-6 text-center">
+                <div className="animate-spin rounded-full h-16 w-16 border-4 border-blue-500/30 border-t-blue-500 mx-auto mb-4"></div>
+                <h3 className="text-lg font-bold text-blue-400 mb-2">Төлбөр шалгаж байна...</h3>
+                <p className="text-blue-200">Түр хүлээнэ үү</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Payment Success */}
+          {paymentVerified && (
+            <Card className="bg-gradient-to-br from-green-900/30 to-green-800/30 border-green-500/30">
+              <CardContent className="p-6 text-center">
+                <CheckCircle className="w-16 h-16 text-green-400 mx-auto mb-4" />
+                <h3 className="text-lg font-bold text-green-400 mb-2">Төлбөр амжилттай!</h3>
+                <p className="text-green-200 mb-4">Захиалга баталгаажуулагдаж байна...</p>
+                <div className="animate-pulse text-sm text-green-300">Автоматаар шилжих болно</div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Payment Failed */}
+          {!paymentVerified && !isCheckingPayment && paymentVerified === false && (
+            <Card className="bg-gradient-to-br from-red-900/30 to-red-800/30 border-red-500/30">
+              <CardContent className="p-6 text-center">
+                <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <span className="text-red-400 text-2xl">❌</span>
+                </div>
+                <h3 className="text-lg font-bold text-red-400 mb-2">Төлбөр төлөгдөөгүй байна</h3>
+                <p className="text-red-200 mb-6">
+                  Төлбөр амжилтгүй байна. {selectedBank?.name} апп дээр төлбөрөө дахин хийнэ үү.
+                </p>
+                <Button
+                  className="w-full bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-bold py-4 text-lg shadow-lg"
+                  onClick={() => {
+                    setPaymentVerified(null)
+                    setIsCheckingPayment(false)
+                  }}
+                >
+                  <RefreshCw className="w-5 h-5 mr-2" />
+                  Дахин шалгах
+                </Button>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
     )
@@ -1122,37 +1410,7 @@ export default function FoodDeliveryApp() {
       )
     }
 
-    const statusSteps = [
-      {
-        id: "pending",
-        title: "Хүлээгдэж байна",
-        description: queuePosition > 0 ? `Дараалалд ${queuePosition}-р байрт байна` : "Таны захиалгыг хүлээн авч байна",
-        icon: Clock,
-        color: "text-yellow-400",
-        bgColor: "bg-yellow-500/20",
-        borderColor: "border-yellow-500",
-      },
-      {
-        id: "confirmed",
-        title: "Захиалга баталгаажуулла",
-        description: "Таны захиалгыг баталгаажуулж, бэлтгэж эхэллээ",
-        icon: CheckCircle,
-        color: "text-blue-400",
-        bgColor: "bg-blue-500/20",
-        borderColor: "border-blue-500",
-      },
-      {
-        id: "ready",
-        title: "Бэлэн болло",
-        description: "Таны захиалга бэлэн боллоо! Авч болно",
-        icon: ChefHat,
-        color: "text-green-400",
-        bgColor: "bg-green-500/20",
-        borderColor: "border-green-500",
-      },
-    ]
-
-    const currentStepIndex = statusSteps.findIndex((step) => step.id === orderStatus)
+    // Remove the statusSteps array completely
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white">
@@ -1163,7 +1421,10 @@ export default function FoodDeliveryApp() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setCurrentView("home")}
+              onClick={() => {
+                // Allow users to go back to home while keeping their order state
+                setCurrentView("home")
+              }}
               className="text-white hover:bg-white/20 backdrop-blur-sm"
             >
               <ArrowLeft className="w-5 h-5" />
@@ -1195,83 +1456,26 @@ export default function FoodDeliveryApp() {
               </p>
             </CardContent>
           </Card>
-
-          {/* Enhanced Progress Steps */}
-          <div className="space-y-6">
-            {statusSteps.map((step, index) => {
-              const isActive = index <= currentStepIndex
-              const isCurrent = index === currentStepIndex
-              const IconComponent = step.icon
-
-              return (
-                <div key={step.id} className="flex items-start gap-4">
-                  {/* Enhanced Icon with real-time animation */}
-                  <div
-                    className={`w-16 h-16 rounded-full flex items-center justify-center border-2 transition-all duration-300 ${
-                      isActive
-                        ? `${step.color} ${step.bgColor} ${step.borderColor} shadow-lg ${isCurrent ? "animate-pulse" : ""}`
-                        : "text-gray-500 bg-gray-800 border-gray-700"
-                    }`}
-                  >
-                    <IconComponent className={`w-8 h-8 ${isCurrent ? "animate-pulse" : ""}`} />
-                    {isCurrent && (
-                      <div className="absolute -inset-2 bg-current opacity-20 rounded-full animate-ping"></div>
-                    )}
-                  </div>
-
-                  {/* Enhanced Content with real-time updates */}
-                  <div className="flex-1 space-y-2">
-                    <h3
-                      className={`font-bold text-lg ${isActive ? step.color : "text-gray-500"} ${isCurrent ? "animate-pulse" : ""}`}
-                    >
-                      {step.title}
-                      {isCurrent && <span className="ml-2 text-xs">●</span>}
-                    </h3>
-                    <p className={`text-sm ${isActive ? "text-gray-300" : "text-gray-600"}`}>{step.description}</p>
-                    {isCurrent && orderStatus !== "ready" && (
-                      <div className="flex items-center gap-2 mt-3">
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
-                        <span className="text-xs text-gray-400 animate-pulse">Боловсруулж байна...</span>
-                      </div>
-                    )}
-                    {isCurrent && orderStatus === "ready" && (
-                      <div className="flex items-center gap-2 mt-3">
-                        <div className="w-4 h-4 bg-green-400 rounded-full animate-bounce"></div>
-                        <span className="text-xs text-green-400 font-bold animate-pulse">Бэлэн боллоо!</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Enhanced Check mark for completed steps */}
-                  {isActive && !isCurrent && (
-                    <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center shadow-lg animate-pulse">
-                      <CheckCircle className="w-5 h-5 text-white" />
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-
-          {/* Enhanced Queue Information */}
-          {orderStatus === "pending" && queuePosition > 0 && (
+          {/* Enhanced Queue Information - Always show when there's an order */}
+          {orderNumber && (
             <Card className="bg-gradient-to-br from-yellow-900/30 to-yellow-800/30 border-yellow-500/30">
               <CardContent className="p-4">
                 <div className="flex items-center gap-4">
                   <div className="w-16 h-16 bg-gradient-to-br from-yellow-400 to-yellow-600 rounded-full flex items-center justify-center shadow-lg">
-                    <span className="text-black font-bold text-xl">{queuePosition}</span>
+                    <span className="text-black font-bold text-xl">{queuePosition || 1}</span>
                   </div>
                   <div>
                     <h3 className="font-bold text-yellow-400">Дараалалд байна</h3>
                     <p className="text-sm text-yellow-200">
-                      Таны өмнө {queuePosition - 1} захиалга байна. Тэвчээртэй хүлээнэ үү.
+                      {queuePosition > 1
+                        ? `Таны өмнө ${queuePosition - 1} захиалга байна. Тэвчээртэй хүлээнэ үү.`
+                        : "Таны захиалгыг боловсруулж байна. Тэвчээртэй хүлээнэ үү."}
                     </p>
                   </div>
                 </div>
               </CardContent>
             </Card>
           )}
-
           {/* Enhanced Order Items */}
           <div className="space-y-4">
             <h3 className="text-lg font-bold text-gray-300">Захиалгын дэлгэрэнгүй</h3>
@@ -1296,19 +1500,16 @@ export default function FoodDeliveryApp() {
               </Card>
             ))}
           </div>
-
           {/* Enhanced Total */}
           <Card className="bg-gradient-to-br from-green-900/30 to-green-800/30 border-green-500/30">
             <CardContent className="p-4">
               <div className="flex justify-between font-bold text-xl">
                 <span>Нийт дүн</span>
-                <span className="text-green-400">₮{getTotal().toLocaleString()}</span>
+                <span className="text-green-400">₮{getSubtotal().toLocaleString()}</span>
               </div>
             </CardContent>
           </Card>
-
           {/* Enhanced Ready State */}
-          {/* Order status view хэсэгт real-time мэдэгдэл нэмэх */}
           {orderStatus === "ready" && (
             <>
               <Card
@@ -1407,23 +1608,41 @@ export default function FoodDeliveryApp() {
 
           {/* Enhanced Order Summary */}
           <Card className="bg-gradient-to-br from-gray-800 to-gray-900 border-gray-700/50">
-            <CardContent className="p-6">
+            <CardContent className="p-4">
               <h2 className="text-lg font-bold text-white mb-4">Захиалгын дэлгэрэнгүй</h2>
               <div className="space-y-3">
                 {cart.map((item) => (
-                  <div key={item.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-lg">
+                  <div key={item.id} className="flex items-center gap-2 p-2 bg-white/5 rounded-lg">
                     <img
                       src={item.image || "/placeholder.svg"}
                       alt={item.name}
-                      className="w-16 h-16 rounded-lg object-cover"
+                      className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
                     />
-                    <div className="flex-1">
-                      <h3 className="font-bold text-white">{item.name}</h3>
-                      <p className="text-sm text-gray-400">₮{item.price.toLocaleString()}</p>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-bold text-white text-sm truncate">{item.name}</h3>
+                      <p className="text-xs text-gray-400">₮{item.price.toLocaleString()}</p>
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm text-gray-400">× {item.quantity}</p>
-                      <p className="font-bold text-white">₮{(item.price * item.quantity).toLocaleString()}</p>
+                    <div className="flex flex-col items-end gap-1">
+                      <div className="flex items-center gap-1 bg-gray-700 rounded-md p-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="w-6 h-6 p-0 text-white hover:bg-gray-600"
+                          onClick={() => updateCartQuantity(item.id, item.quantity - 1)}
+                        >
+                          <Minus className="w-3 h-3" />
+                        </Button>
+                        <span className="text-white font-bold text-sm min-w-[20px] text-center">{item.quantity}</span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="w-6 h-6 p-0 text-white hover:bg-gray-600"
+                          onClick={() => updateCartQuantity(item.id, item.quantity + 1)}
+                        >
+                          <Plus className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      <p className="font-bold text-white text-sm">₮{(item.price * item.quantity).toLocaleString()}</p>
                     </div>
                   </div>
                 ))}
@@ -1431,22 +1650,12 @@ export default function FoodDeliveryApp() {
             </CardContent>
           </Card>
 
-          {/* Enhanced Price Breakdown */}
+          {/* Enhanced Price Breakdown - Only showing subtotal */}
           <Card className="bg-gradient-to-br from-blue-900/30 to-blue-800/30 border-blue-500/30">
-            <CardContent className="p-6 space-y-3">
-              <div className="flex justify-between text-gray-300">
-                <span>Дэд дүн</span>
-                <span>₮{getSubtotal().toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between text-gray-300">
-                <span>Татвар (10%)</span>
-                <span>₮{getTax().toLocaleString()}</span>
-              </div>
-              <div className="border-t border-gray-600 pt-3">
-                <div className="flex justify-between font-bold text-xl">
-                  <span className="text-white">Нийт дүн</span>
-                  <span className="text-blue-400">₮{getTotal().toLocaleString()}</span>
-                </div>
+            <CardContent className="p-6">
+              <div className="flex justify-between font-bold text-xl">
+                <span className="text-white">Дэд дүн</span>
+                <span className="text-blue-400">₮{getSubtotal().toLocaleString()}</span>
               </div>
             </CardContent>
           </Card>
@@ -1518,7 +1727,7 @@ export default function FoodDeliveryApp() {
                         ? `bg-gradient-to-r ${bank.color}/20 border-yellow-500`
                         : "bg-gray-800 border-gray-700 hover:border-gray-600"
                     }`}
-                    onClick={() => setSelectedPayment(bank.id)}
+                    onClick={() => handleBankPayment(bank.id)}
                   >
                     <div className="flex items-center gap-3">
                       <img
@@ -1542,14 +1751,18 @@ export default function FoodDeliveryApp() {
           {/* Enhanced Pay Button */}
           <Button
             className={`w-full py-4 text-lg font-bold shadow-lg transition-all duration-300 ${
-              selectedTable && selectedTable > 0
+              selectedTable && selectedTable > 0 && selectedPayment === "cash"
                 ? "bg-gradient-to-r from-green-500 to-blue-500 hover:from-green-600 hover:to-blue-600 text-white"
                 : "bg-gray-700 text-gray-400 cursor-not-allowed"
             }`}
-            disabled={!selectedTable || selectedTable <= 0}
+            disabled={!selectedTable || selectedTable <= 0 || selectedPayment !== "cash"}
             onClick={handlePayment}
           >
-            {selectedTable && selectedTable > 0 ? "Төлөх" : "Ширээний тоо оруулна уу"}
+            {!selectedTable || selectedTable <= 0
+              ? "Ширээний тоо оруулна уу"
+              : selectedPayment !== "cash"
+                ? "Төлбөрийн арга сонгоно уу"
+                : "Төлөх"}
           </Button>
         </div>
       </div>
@@ -1787,10 +2000,14 @@ export default function FoodDeliveryApp() {
               size="sm"
               className="text-white hover:bg-white/10 rounded-full w-10 h-10 p-0 relative"
               onClick={() => {
-                // If there's an active order, go to status view
+                // If there's an active order and it's not completed, go to status view
                 if (orderNumber && orderStatus !== "completed") {
                   setCurrentView("status")
+                } else if (cart.length > 0) {
+                  // If there are items in cart but no active order, go to checkout
+                  setCurrentView("checkout")
                 } else {
+                  // If cart is empty, just show checkout page
                   setCurrentView("checkout")
                 }
               }}
@@ -1978,7 +2195,9 @@ export default function FoodDeliveryApp() {
             className={`flex flex-col items-center gap-1 text-xs transition-all duration-300 ${
               currentView === "home" ? "text-yellow-400 scale-110" : "text-gray-400 hover:text-white"
             }`}
-            onClick={() => setCurrentView("home")}
+            onClick={() => {
+              setCurrentView("home")
+            }}
           >
             <Home className="w-5 h-5" />
             Нүүр
