@@ -148,7 +148,20 @@ export const dbOperations = {
   },
 
   async updateOrder(id: string, order: any) {
-    await update(ref(database, `orders/${id}`), order)
+    console.log(`🔥 FIREBASE: Updating order in Firebase: ${id}`, order)
+    try {
+      // Use set instead of update to ensure complete data replacement and trigger all listeners
+      await set(ref(database, `orders/${id}`), order)
+      console.log(`🔥 FIREBASE: ✅ Order ${id} updated successfully`)
+
+      // Add a delay to ensure Firebase has fully processed and propagated the change
+      await new Promise((resolve) => setTimeout(resolve, 200))
+
+      console.log(`🔥 FIREBASE: 🚀 Update propagation complete for ${id}`)
+    } catch (error) {
+      console.error(`🔥 FIREBASE: ❌ Error updating order ${id}:`, error)
+      throw error
+    }
   },
 
   // Site Branding operations
